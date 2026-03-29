@@ -7,6 +7,24 @@ const addDataForTimeSlot = async (req, res) => {
         // Requires drawId (no longer accepts legacy timeSlot)
         const { drawId, data, category, userId: targetUserIdBody } = req.body;
     try {
+                if (!Array.isArray(data) || data.length === 0) {
+                    return res.status(400).json({ error: 'data array is required' });
+                }
+
+                const normalizedData = [];
+                for (const item of data) {
+                    const uniqueId = String(item?.uniqueId ?? item?.no ?? item?.number ?? '').trim();
+                    if (!uniqueId) {
+                        return res.status(400).json({ error: 'Each row must include uniqueId (or no/number)' });
+                    }
+                    const firstPrice = Number(item?.firstPrice ?? item?.f ?? item?.fPrize ?? 0);
+                    const secondPrice = Number(item?.secondPrice ?? item?.s ?? item?.sPrize ?? 0);
+                    if (!Number.isFinite(firstPrice) || !Number.isFinite(secondPrice)) {
+                        return res.status(400).json({ error: `Invalid amount for number ${uniqueId}` });
+                    }
+                    normalizedData.push({ uniqueId, firstPrice, secondPrice });
+                }
+
                 // drawId is required
                 if (!drawId) return res.status(400).json({ error: 'drawId is required' });
                 // Validate draw and derive date
@@ -16,7 +34,7 @@ const addDataForTimeSlot = async (req, res) => {
                 if (draw.isExpired) return res.status(400).json({ error: 'Draw is closed. Cannot add data.' });
 
         // Calculate total amount from firstPrice and secondPrice
-        const totalAmount = data.reduce((sum, item) => {
+        const totalAmount = normalizedData.reduce((sum, item) => {
             return sum + item.firstPrice + item.secondPrice;
         }, 0);
         // Determine whose balance to use: explicit userId from distributor/admin, else caller
@@ -35,7 +53,7 @@ const addDataForTimeSlot = async (req, res) => {
             });
         }
     const dataDate = draw.draw_date;
-    const newData = new Data({ userId : effectiveUserId, drawId: draw._id, category, data, date : dataDate });
+    const newData = new Data({ userId : effectiveUserId, drawId: draw._id, category, data: normalizedData, date : dataDate });
         await newData.save();
         // Deduct the total amount from user's balance
         user.balance -= totalAmount;
@@ -1094,6 +1112,94 @@ const getDataForClient = async (req, res) => {
         }
 }; 
 
+const searchBundleEntries = async (req, res) => {
+    try {
+        const { drawId, no } = req.query;
+        if (!drawId || !no) {
+            return res.status(400).json({ error: 'drawId and no are required' });
+        }
+
+        const rawNo = String(no).trim();
+        if (!rawNo) {
+            return res.status(400).json({ error: 'Bundle/NO cannot be empty' });
+        }
+
+        const requestor = await User.findById(req.user.id).select('_id role');
+        if (!requestor) {
+            return res.status(404).json({ error: 'Requesting user not found' });
+        }
+
+        let allowedUserIds = [];
+        if (requestor.role === 'distributor') {
+            const clients = await User.find({
+                createdBy: requestor._id,
+                role: { $in: ['user', 'party'] }
+            }).select('_id');
+            allowedUserIds = clients.map((c) => c._id);
+        } else {
+            allowedUserIds = [requestor._id];
+        }
+
+        if (!allowedUserIds.length) {
+            return res.status(200).json({ data: [], count: 0 });
+        }
+
+        const normalizedNo = /^\d+$/.test(rawNo) ? String(Number(rawNo)) : null;
+
+        const docs = await Data.find({
+            drawId,
+            category: 'general',
+            userId: { $in: allowedUserIds },
+        }).select('userId drawId date data').populate('userId', 'username dealerId');
+
+        const results = [];
+        for (const doc of docs) {
+            const clientObj = doc.userId;
+            const clientId = clientObj?._id ? String(clientObj._id) : String(doc.userId);
+            const clientUsername = clientObj?.username || '';
+            const clientDealerId = clientObj?.dealerId || '';
+
+            for (const row of doc.data || []) {
+                const rowNo = String(row?.uniqueId ?? '').trim();
+                if (!rowNo) continue;
+
+                const isDirectMatch = rowNo === rawNo;
+                const isNormalizedMatch = normalizedNo !== null
+                    && /^\d+$/.test(rowNo)
+                    && String(Number(rowNo)) === normalizedNo;
+
+                if (!isDirectMatch && !isNormalizedMatch) continue;
+
+                results.push({
+                    docId: String(doc._id),
+                    entryId: row?._id ? String(row._id) : null,
+                    drawId: String(doc.drawId),
+                    date: doc.date,
+                    no: rowNo,
+                    firstPrice: Number(row?.firstPrice || 0),
+                    secondPrice: Number(row?.secondPrice || 0),
+                    clientId,
+                    clientUsername,
+                    clientDealerId,
+                    // Preferred display identifier in distributor UI
+                    clientDisplayId: clientDealerId || clientId,
+                });
+            }
+        }
+
+        results.sort((a, b) => {
+            const byClient = String(a.clientDisplayId).localeCompare(String(b.clientDisplayId));
+            if (byClient !== 0) return byClient;
+            return String(a.no).localeCompare(String(b.no));
+        });
+
+        return res.status(200).json({ data: results, count: results.length });
+    } catch (error) {
+        console.error('searchBundleEntries error', error);
+        return res.status(500).json({ error: error.message });
+    }
+};
+
 const checkOverlimitExists = async (req, res) => {
     const { drawId, prizeType } = req.query;
     if (!drawId) return res.status(400).json({ error: 'drawId is required' });
@@ -1119,6 +1225,7 @@ export {
     getCombinedVoucherData,
     getDataForClient,
     checkOverlimitExists,
-    deleteDemandForClient
+    deleteDemandForClient,
+    searchBundleEntries
 }
 

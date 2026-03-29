@@ -15,7 +15,8 @@ import {
     getCombinedVoucherData,
     getDataForClient,
     checkOverlimitExists,
-    deleteDemandForClient
+    deleteDemandForClient,
+    searchBundleEntries
 } from "../controllers/dataController.js";
 import { authMiddleware } from "../middlewares/authMiddleware.js";
 
@@ -37,5 +38,6 @@ dataRouter.delete('/delete-individual-entries', authMiddleware, deleteIndividual
 dataRouter.get('/get-combined-voucher-data', authMiddleware, getCombinedVoucherData); // this is used to get combined voucher data
 dataRouter.get('/check-overlimit-exists', authMiddleware, checkOverlimitExists); // this is used to check if overlimit exists)
 dataRouter.post('/delete-demand-for-client', authMiddleware, deleteDemandForClient); // delete demand records for a specific client/draw/prizeType
+dataRouter.get('/search-bundle', authMiddleware, searchBundleEntries); // search bundle entries by draw and NO; distributor gets client-wise results
 
 export default dataRouter;

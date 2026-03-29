@@ -1,27 +1,9 @@
 import { connectDB } from "./db/db.js";
 import dotenv from "dotenv";
 import { app } from "./app.js";
-import User from "./models/User.js";
 import Draw from "./models/Draw.js";
 
-dotenv.config({
-  path: "./.env",
-});
-
-const seedAdmin = async () => {
-  try {
-    const admin = await User.findOne({ role: "admin" });
-    if(!admin){
-      await User.create({
-        username: process.env.ADMIN_USERNAME,
-        password: process.env.ADMIN_PASSWORD,
-        role: "admin",
-    });
-  }
-  } catch (error) {
-    console.log("Error while creating admin", error);
-  }
-}
+dotenv.config({ path: "./.env" });
 
 const seedDraws = async () => {
   try {
@@ -41,10 +23,10 @@ const seedDraws = async () => {
 
 connectDB()
   .then(() => {
-    seedAdmin();
     seedDraws();
-    app.listen(process.env.PORT || 5000, () => {
-      console.log(`The server is running at ${process.env.PORT}`);
+    const port = process.env.PORT || 5000;
+    app.listen(port, () => {
+      console.log(`The server is running at ${port}`);
     });
   })
   .catch((err) => {
